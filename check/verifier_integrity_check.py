@@ -98,10 +98,14 @@ def workflow_files(root: Path) -> list[Path]:
 # --- A. 必須チェックの穴 ---------------------------------------------------
 
 def required_contexts(root: Path, res: Result) -> set[str] | None:
-    """branch protection の必須チェック名を返す。判定できなければ None(未装備)。
+    """実際に強制されている必須チェック名を返す。判定できなければ None(未装備)。
 
-    「保護が無い」と「保護を読む権限が無い」は区別する。
-    前者は指摘（マージ時に何も強制されていない）、後者は未装備（確認できない）。
+    保護には2系統ある。両方を見ないと「保護が無い」と誤判定する。
+      - 旧: branch protection  /repos/{r}/branches/{b}/protection
+      - 新: rulesets           /repos/{r}/rules/branches/{b}(有効なルールのみ)
+
+    さらに ruleset には enforcement が active / evaluate / disabled の3状態が
+    あり、active 以外は**画面上は設定済みに見えるが強制されていない**。
     """
     slug = gh_json(["repo", "view", "--json",
                     "nameWithOwner,defaultBranchRef,viewerPermission",
@@ -111,30 +115,52 @@ def required_contexts(root: Path, res: Result) -> set[str] | None:
         res.unarmed.append(
             "A: リポジトリを特定できない(gh が無い、未認証、または GitHub 上に無い)")
         return None
+    repo, branch = slug["n"], slug["b"]
+    where = f"{repo}@{branch}"
+    admin = slug.get("p") == "ADMIN"
+    names: set[str] = set()
+    seen_any = False
 
-    where = f"{slug['n']}@{slug['b']}"
-    prot = gh_json(["api", f"repos/{slug['n']}/branches/{slug['b']}/protection"], root)
-    if prot is None:
-        if slug.get("p") != "ADMIN":
-            res.unarmed.append(f"A: {where} の branch protection を読む権限が無い"
-                               f"(viewerPermission={slug.get('p')})")
-            return None
+    # 旧 branch protection
+    prot = gh_json(["api", f"repos/{repo}/branches/{branch}/protection"], root)
+    if prot is not None:
+        seen_any = True
+        checks = prot.get("required_status_checks") or {}
+        names |= set(checks.get("contexts") or [])
+        names |= {c["context"] for c in (checks.get("checks") or []) if c.get("context")}
+
+    # rulesets（有効なルールのみが返る）
+    rules = gh_json(["api", f"repos/{repo}/rules/branches/{branch}"], root)
+    if rules is not None:
+        seen_any = True
+        for rule in rules:
+            if rule.get("type") != "required_status_checks":
+                continue
+            params = rule.get("parameters") or {}
+            names |= {c["context"]
+                      for c in (params.get("required_status_checks") or [])
+                      if c.get("context")}
+
+    # 設定されているが有効化されていない ruleset
+    inactive = []
+    for rs in (gh_json(["api", f"repos/{repo}/rulesets"], root) or []):
+        if rs.get("target") == "branch" and rs.get("enforcement") != "active":
+            inactive.append(f"{rs.get('name')}(enforcement={rs.get('enforcement')})")
+    if inactive:
         res.findings.append(
-            f"{where} に branch protection が無い。"
-            "CIが赤でも、レビューが無くても、そのままマージできる")
-        print(f"   ✗ {where} — branch protection が無い")
-        return set()
+            f"{repo} に有効化されていない ruleset がある: {', '.join(inactive)}。"
+            "画面上は設定済みに見えるが、何も強制していない")
+        print(f"   ✗ 有効化されていない ruleset: {', '.join(inactive)}")
 
-    checks = (prot.get("required_status_checks") or {})
-    names = set(checks.get("contexts") or [])
-    for c in checks.get("checks") or []:
-        if c.get("context"):
-            names.add(c["context"])
+    if not seen_any and not admin:
+        res.unarmed.append(f"A: {where} の保護設定を読む権限が無い"
+                           f"(viewerPermission={slug.get('p')})")
+        return None
     if not names:
         res.findings.append(
-            f"{where} は保護されているが必須チェックが0件。"
-            "CIの結果はマージ可否に影響しない")
-        print(f"   ✗ {where} — 必須チェックが0件")
+            f"{where} に有効な必須チェックが無い。"
+            "CIが赤でも、そのままマージできる")
+        print(f"   ✗ {where} — 有効な必須チェックが無い")
     return names
 
 

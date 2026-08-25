@@ -91,7 +91,7 @@ python check/verifier_integrity_check.py /path/to/your/repo
 
 | | 検査 |
 |---|---|
-| **A. 必須チェックの穴** | required status check に指定したジョブが、job レベルの `if:` でスキップされうるか。branch protection そのものが無い場合も指摘します |
+| **A. 必須チェックの穴** | required status check に指定したジョブが、job レベルの `if:` でスキップされうるか。旧 branch protection と新 rulesets の両方を見ます。**有効な必須チェックが無い場合**と、**設定はされているが `enforcement` が `active` でない ruleset がある場合**も指摘します（画面上は設定済みに見えて何も強制していない状態）|
 | **B. 緑を作る経路** | 失敗や未実行を無条件に成功へ変換している箇所。`continue-on-error` / `|| true` / `--exit-zero` / `--passWithNoTests` / `set +e` / シェルの条件付きskip |
 
 出力例（このリポジトリ自身に対して実行した場合）:
