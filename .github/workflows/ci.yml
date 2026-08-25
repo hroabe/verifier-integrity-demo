@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  # このジョブを branch protection の required status check に指定してある。
+  #
+  # if: を job レベルに置いているのは、実務でよくある形だからである。
+  # workflow レベルの paths: フィルタを使うと、対象外のPRではワークフロー自体が
+  # 起動せず、必須チェックが「Expected — Waiting for status to be reported」で
+  # 止まったままマージできなくなる。
+  # それを避けるために job レベルの if: へ移すのが定石になっている。
+  #
+  # しかし job レベルの if: でスキップされたジョブは "Success" として報告され、
+  # required に指定していてもマージを妨げない。
+  # つまり「止まらないようにする」ための定石が、そのまま穴になっている。
+  required-gate:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-gate') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: このゲートは必ず失敗する
+        run: |
+          echo "required-gate が実行された。"
+          echo "このジョブは常に失敗する。つまり、実行されさえすればマージは阻止される。"
+          exit 1
