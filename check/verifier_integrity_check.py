@@ -21,6 +21,7 @@
   python check/verifier_integrity_check.py --selftest
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -35,7 +36,9 @@ GREEN_MAKERS = [
      "失敗しても成功として扱われる"),
     (r"\|\|\s*(true|:|exit\s+0)\b",
      "失敗が握りつぶされる"),
-    (r"\|\|\s*echo\b",
+    # `$(...)` を含む行は値のフォールバック選択（例: インタプリタの探索）であって
+    # 失敗の握りつぶしではない。除外しないと Makefile の先頭行を誤検出する。
+    (r"\|\|\s*echo\b(?![^\n]*\$\()",
      "失敗がメッセージに置き換わる"),
     (r"--exit-zero\b",
      "静的解析が指摘を出しても成功で終わる(ruff / flake8)"),
@@ -43,9 +46,16 @@ GREEN_MAKERS = [
      "テストが0件でも成功する(jest)"),
     (r"\bset\s+\+e\b",
      "以降の失敗で停止しなくなる"),
-    (r"if\s+\[\s*-[a-z]\s+[^\]]+\]\s*;\s*then.*else\s+echo",
-     "条件が揃わないと検証せずメッセージだけ出して成功する"),
+    # 条件付きで飛ばされているのが「検証」であるときだけ指摘する。
+    # フックの設置など導入処理の省略は、検証の省略ではない。
+    (r"if\s+\[[^\]]+\]\s*;\s*then[^;]*"
+     r"\b(test|tests|analyze|analyse|check|lint|verify|pytest|run_gates|"
+     r"predictions|golden|coverage)\b[^;]*;.*else\s+echo",
+     "検証コマンドが条件付きで飛ばされ、それでも成功する"),
 ]
+
+# 変数代入は値の選択であって検証ではない（例: PY = $(shell ... || echo python)）
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*[:?+]?=")
 
 SCAN_GLOBS = [".github/workflows/*.yml", ".github/workflows/*.yaml",
               "Makefile", "makefile", "scripts/*.sh"]
@@ -248,9 +258,16 @@ def check_required_holes(root: Path, res: Result) -> None:
 
 def check_green_makers(root: Path, res: Result) -> None:
     print("\nB. 緑を作る経路")
+    # Windows / macOS は大文字小文字を区別しないため Makefile と makefile が
+    # 同じ実体に解決される。実パスで重複を除かないと同じ行を二重に数える。
     targets: list[Path] = []
+    seen: set[str] = set()
     for pattern in SCAN_GLOBS:
-        targets += sorted(root.glob(pattern))
+        for path in sorted(root.glob(pattern)):
+            key = os.path.normcase(str(path.resolve()))
+            if key not in seen:
+                seen.add(key)
+                targets.append(path)
     if not targets:
         res.unarmed.append("B: 走査対象のファイルが無い")
         print("   → 未装備（走査対象なし）")
@@ -262,7 +279,8 @@ def check_green_makers(root: Path, res: Result) -> None:
         except OSError:
             continue
         for n, line in enumerate(lines, 1):
-            if line.lstrip().startswith("#"):
+            stripped = line.lstrip()
+            if stripped.startswith("#") or ASSIGNMENT.match(stripped):
                 continue
             for pattern, why in GREEN_MAKERS:
                 if re.search(pattern, line):
@@ -311,10 +329,14 @@ def selftest() -> int:
         ("      - run: pytest -q", False),
         ("      - run: ruff check .", False),
         ("      # continue-on-error: true", False),   # コメント行は対象外
+        # 以下は実リポジトリ監査で判明した誤検出（回帰防止）
+        ("PY = $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python)", False),
+        ('	@if [ -d .git ]; then cp scripts/hooks/pre-commit .git/hooks/; else echo "skip"; fi', False),
+        ('	@if [ -f pubspec.yaml ]; then flutter analyze && flutter test; else echo "skip"; fi', True),
     ]
     ng = 0
     for line, expected in cases:
-        if line.lstrip().startswith("#"):
+        if line.lstrip().startswith("#") or ASSIGNMENT.match(line.lstrip()):
             hit = False
         else:
             hit = any(re.search(p, line) for p, _ in GREEN_MAKERS)
