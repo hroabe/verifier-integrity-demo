@@ -1,0 +1,18 @@
+# 診断ツール自身の検査。デモ用の required-gate とは無関係。
+# pull_request では起動しない（デモのPR #1 / #2 の状態を変えないため）。
+name: check-selftest
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - run: python check/verifier_integrity_check.py --selftest

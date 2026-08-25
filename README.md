@@ -80,12 +80,49 @@ Expected — Waiting for status to be reported
 
 ## 自分のリポジトリで確かめる
 
-```bash
-# 必須チェックの一覧を出す
-gh api repos/OWNER/REPO/branches/main/protection \
-  --jq '.required_status_checks.contexts'
+診断ツールを同梱しています。**読み取りのみで、リポジトリを変更しません。**
 
-# ワークフロー内で job レベル if: を持つジョブを探す
+```bash
+pip install pyyaml
+python check/verifier_integrity_check.py /path/to/your/repo
+```
+
+2つを見ます。
+
+| | 検査 |
+|---|---|
+| **A. 必須チェックの穴** | required status check に指定したジョブが、job レベルの `if:` でスキップされうるか。branch protection そのものが無い場合も指摘します |
+| **B. 緑を作る経路** | 失敗や未実行を無条件に成功へ変換している箇所。`continue-on-error` / `|| true` / `--exit-zero` / `--passWithNoTests` / `set +e` / シェルの条件付きskip |
+
+出力例（このリポジトリ自身に対して実行した場合）:
+
+```
+A. 必須チェックの穴
+   必須チェック: required-gate
+   job レベル if: を持つジョブ: required-gate
+   ✗ required-gate — スキップされうる（.github/workflows/ci.yml）
+
+結果: 指摘 1件 / 未装備 0件
+```
+
+**このツール自身も「緑」と「未装備」を区別します。** 権限が無くて branch protection を読めなかったときは、指摘0件でも緑とは報告せず `exit 3`（未装備）を返します。確認していないことを合格として報告しない、というのがこのリポジトリの主張そのものだからです。
+
+| exit | 意味 |
+|---|---|
+| 0 | 指摘なし・すべて確認できた |
+| 1 | 指摘あり |
+| 3 | 指摘は無いが、確認できなかった検査がある（未装備） |
+
+検出パターン自体の検査:
+
+```bash
+python check/verifier_integrity_check.py --selftest
+```
+
+### 手で確かめる場合
+
+```bash
+gh api repos/OWNER/REPO/branches/main/protection --jq '.required_status_checks.contexts'
 grep -n -B2 'if:' .github/workflows/*.yml
 ```
 
