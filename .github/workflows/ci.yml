@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+    # labeled / unlabeled を入れているのは、ラベルを付け外しするだけで
+    # 判定が反転する様子を1つのPRで観測できるようにするため。
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
   # このジョブを branch protection の required status check に指定してある。
@@ -14,9 +17,11 @@ jobs:
   #
   # しかし job レベルの if: でスキップされたジョブは "Success" として報告され、
   # required に指定していてもマージを妨げない。
-  # つまり「止まらないようにする」ための定石が、そのまま穴になっている。
+  # つまり「詰まらないようにする」ための定石が、そのまま穴になっている。
   required-gate:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-gate') }}
+    if: >-
+      ${{ !startsWith(github.head_ref, 'skip/')
+          && !contains(github.event.pull_request.labels.*.name, 'skip-gate') }}
     runs-on: ubuntu-latest
     steps:
       - name: このゲートは必ず失敗する
