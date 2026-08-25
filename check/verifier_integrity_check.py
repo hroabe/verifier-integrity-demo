@@ -141,16 +141,42 @@ def required_contexts(root: Path, res: Result) -> set[str] | None:
                       for c in (params.get("required_status_checks") or [])
                       if c.get("context")}
 
-    # 設定されているが有効化されていない ruleset
-    inactive = []
+    # 「設定済みに見えるが強制していない」ruleset を検出する。
+    # 画面では Active と表示されていても、次のどれかで実質無効になる。
+    GATING = {"required_status_checks", "pull_request", "required_signatures",
+              "required_deployments", "required_linear_history"}
     for rs in (gh_json(["api", f"repos/{repo}/rulesets"], root) or []):
-        if rs.get("target") == "branch" and rs.get("enforcement") != "active":
-            inactive.append(f"{rs.get('name')}(enforcement={rs.get('enforcement')})")
-    if inactive:
-        res.findings.append(
-            f"{repo} に有効化されていない ruleset がある: {', '.join(inactive)}。"
-            "画面上は設定済みに見えるが、何も強制していない")
-        print(f"   ✗ 有効化されていない ruleset: {', '.join(inactive)}")
+        if rs.get("target") != "branch":
+            continue
+        name = rs.get("name")
+        if rs.get("enforcement") != "active":
+            res.findings.append(
+                f"ruleset '{name}' は enforcement={rs.get('enforcement')}。"
+                "設定済みに見えるが、何も強制していない")
+            print(f"   ✗ ruleset '{name}' — enforcement={rs.get('enforcement')}")
+            continue
+        detail = gh_json(["api", f"repos/{repo}/rulesets/{rs.get('id')}"], root)
+        if not detail:
+            continue
+        include = ((detail.get("conditions") or {}).get("ref_name") or {}).get("include") or []
+        if not include:
+            res.findings.append(
+                f"ruleset '{name}' は active だが対象ブランチ(conditions.ref_name.include)が"
+                "空。どのブランチにも適用されていない")
+            print(f"   ✗ ruleset '{name}' — active だが対象ブランチが空")
+            continue
+        kinds = {r.get("type") for r in (detail.get("rules") or [])}
+        if not (kinds & GATING):
+            res.findings.append(
+                f"ruleset '{name}' に検証を要求するルールが無い"
+                f"(現在: {', '.join(sorted(kinds)) or 'なし'})。"
+                "削除や強制pushは防げるが、CIの結果はマージ可否に影響しない")
+            print(f"   ✗ ruleset '{name}' — 検証を要求するルールが無い"
+                  f"({', '.join(sorted(kinds)) or 'なし'})")
+        bypass = [f"{b.get('actor_type')}/{b.get('bypass_mode')}"
+                  for b in (detail.get("bypass_actors") or [])]
+        if bypass:
+            res.notes.append(f"ruleset '{name}' の bypass: {', '.join(bypass)}")
 
     if not seen_any and not admin:
         res.unarmed.append(f"A: {where} の保護設定を読む権限が無い"
