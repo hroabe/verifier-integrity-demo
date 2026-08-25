@@ -272,6 +272,28 @@ def check_green_makers(root: Path, res: Result) -> None:
                     print(f"   ✗ {where}  {why}")
                     print(f"     {line.strip()[:100]}")
                     break
+
+    # package.json の scripts も見る。
+    # CI が `npm test` を呼んでいても、その中身が --passWithNoTests や
+    # `|| true` なら緑は何も意味しない。ワークフローだけでは見落とす。
+    pkg = root / "package.json"
+    if pkg.exists():
+        targets.append(pkg)
+        try:
+            scripts = (json.loads(pkg.read_text(encoding="utf-8")) or {}).get("scripts") or {}
+        except (json.JSONDecodeError, OSError):
+            scripts = {}
+            res.unarmed.append("B: package.json を解析できない")
+        for name, cmd in scripts.items():
+            for pattern, why in GREEN_MAKERS:
+                if re.search(pattern, str(cmd)):
+                    hits += 1
+                    where = f"package.json:scripts.{name}"
+                    res.findings.append(f"{where} {why} — {str(cmd)[:80]}")
+                    print(f"   ✗ {where}  {why}")
+                    print(f"     {str(cmd)[:100]}")
+                    break
+
     print(f"   走査 {len(targets)} ファイル" + ("" if hits else " → 指摘なし"))
 
 
