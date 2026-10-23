@@ -1,4 +1,4 @@
-name: CI
+name: 02 必須チェックの挙動デモ（意図的失敗）
 
 on:
   pull_request:

@@ -1,6 +1,6 @@
 # 診断ツール自身の検査。デモ用の required-gate とは無関係。
 # pull_request では起動しない（デモのPR #1 / #2 の状態を変えないため）。
-name: check-selftest
+name: 01 検証ツールの自己テスト
 on:
   push:
     branches: [main]
